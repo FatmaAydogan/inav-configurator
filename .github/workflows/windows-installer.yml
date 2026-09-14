@@ -22,6 +22,8 @@ jobs:
 
       - name: Install dependencies
         run: yarn install
+        env:
+          YARN_ENABLE_IMMUTABLE_INSTALLS: false
 
       - name: Build Windows installer
         run: npx electron-forge make -p win32 -a x64 --targets=@electron-forge/maker-wix
