@@ -1,0 +1,33 @@
+name: Windows Installer Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable Corepack and Yarn
+        run: |
+          corepack enable
+          corepack prepare yarn@stable --activate
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Build Windows installer
+        run: npx electron-forge make -p win32 -a x64 --targets=@electron-forge/maker-wix
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: inav-configurator-windows-installer
+          path: out/make/**/*.msi
