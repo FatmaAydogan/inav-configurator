@@ -550,7 +550,7 @@
         "message": "EEPROM <span style=\"color: #37a8db\">saved</span>"
     },
     "defaultWelcomeIntro": {
-        "message": "Welcome to <strong>INAV - Configurator</strong>, a utility designed to simplify updating, configuring and tuning of your flight controller."
+        "message": "Welcome to  <strong>INAV - Configurator</strong>, a utility designed to simplify updating, configuring and tuning of your flight controller."
     },
     "defaultWelcomeHead": {
         "message": "Firmware & drivers"

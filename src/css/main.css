@@ -138,8 +138,10 @@ input[type="number"]::-webkit-inner-spin-button {
     height: 80px;
     z-index: 0;
     width: 450px;
-    background: url("./../../images/light-wide-2.svg") no-repeat left center;
+
+    background: url("./../../images/icons/beyond_beyaz.png") no-repeat left center;
     background-size: contain;
+
     margin-left: 15px;
     margin-top: 10px;
 }
@@ -997,15 +999,15 @@ li.active .ic_motor {
 }
 
 .ic_welcome {
-    background-image: url("./../../images/icons/cf_icon_welcome_grey.svg");
-}
-
-.ic_welcome:hover {
-    background-image: url("./../../images/icons/cf_icon_welcome_white.svg");
+    background-image: url("./../../images/icons/beyondtechtr_logo.jpeg");
 }
 
 li.active .ic_welcome {
-    background-image: url("./../../images/icons/cf_icon_welcome_white.svg");
+    background-image: url("./../../images/icons/beyondtechtr_logo.jpeg");
+}
+
+.ic_welcome:hover {
+    background-image: url("./../../images/icons/beyondtechtr_logo.jpeg");
 }
 
 .ic_help {

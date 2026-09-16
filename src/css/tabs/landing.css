@@ -14,7 +14,7 @@
 
 .tab-landing .content_top {
     height: 140px;
-    background: white url(./../../../images/map_bg.svg);
+    background: rgb(20, 1, 67) ;
     padding: 20px;
 }
 
@@ -78,11 +78,18 @@
     width: 700px;
     height: 110px;
     margin: 10px;
-    background-image: url('./../../../images/cf_logo_white.svg');
+    background-image: url('./../../../images/icons/beyond_beyaz.png');
     background-position: center;
     background-repeat: no-repeat;
+    background-size: 100% 100%;
+
 }
 
+.beyond-logo {
+    font-size: 50px;
+    font-weight: bold;
+    color: white;
+}
 
 /* sponsors blocks */
 .sponsors .title {
