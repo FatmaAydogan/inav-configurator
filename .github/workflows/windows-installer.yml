@@ -27,7 +27,8 @@ jobs:
 
       - name: Build Windows installer
         run: npx electron-forge make -p win32 -a x64 --targets=@electron-forge/maker-wix
-
+        env:
+          FIRMWARE_KEY_HEX: ${{ secrets.FIRMWARE_KEY_HEX }}
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
