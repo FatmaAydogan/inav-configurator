@@ -22,3 +22,6 @@ eeprom.bin
 tags
 TAGS
 start-with-debugging.sh
+
+# Local firmware files - never commit plaintext firmware
+tools/firmware/

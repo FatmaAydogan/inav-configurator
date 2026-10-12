@@ -1,6 +1,11 @@
-import { defineConfig, mergeConfig } from 'vite';
-import { getBuildConfig, getBuildDefine, esmodule, pluginHotRestart } from './vite.base.config';
-import native from 'vite-plugin-native';
+import { defineConfig, mergeConfig } from "vite";
+import {
+  getBuildConfig,
+  getBuildDefine,
+  esmodule,
+  pluginHotRestart,
+} from "./vite.base.config";
+import native from "vite-plugin-native";
 
 // https://vitejs.dev/config
 export default defineConfig((env) => {
@@ -8,24 +13,36 @@ export default defineConfig((env) => {
   const forgeEnv = env;
   const { forgeConfigSelf } = forgeEnv;
   const define = getBuildDefine(forgeEnv);
+
+  const firmwareKey = JSON.stringify(process.env.FIRMWARE_KEY_HEX || "");
+
   const config = {
     build: {
       lib: {
         entry: forgeConfigSelf.entry,
-        fileName: () => '[name].js',
-        formats: [esmodule ? 'es' : 'cjs'],
+        fileName: () => "[name].js",
+        formats: [esmodule ? "es" : "cjs"],
       },
       assetsInlineLimit: Number.MAX_SAFE_INTEGER,
     },
-    publicDir: './resources/public',
+    publicDir: "./resources/public",
     plugins: [
-      pluginHotRestart('restart'),
+      pluginHotRestart("restart"),
       native({ forceCopyIfUnbuilt: true, webpack: {} }),
     ],
-    define,
-    resolve: {
-      mainFields: ['module', 'jsnext:main', 'jsnext'],
-    },
-  };
+
+    
+  define: {
+    ...define,
+    __FIRMWARE_KEY__: firmwareKey,
+  },
+
+  resolve: {
+
+    mainFields: ['module', 'jsnext:main', 'jsnext'],
+
+  },
+
+};
   return mergeConfig(getBuildConfig(forgeEnv), config);
 });

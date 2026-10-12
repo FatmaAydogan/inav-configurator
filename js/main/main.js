@@ -1,16 +1,27 @@
-import { chmod, rm, mkdirSync, existsSync } from 'node:fs';
-import { app, BrowserWindow, ipcMain, Menu, MenuItem, shell, dialog, session } from 'electron';
-import windowStateKeeper from 'electron-window-state';
+import { chmod, rm, mkdirSync, existsSync } from "node:fs";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  MenuItem,
+  shell,
+  dialog,
+  session,
+} from "electron";
+import windowStateKeeper from "electron-window-state";
 import Store from "electron-store";
-import path from 'path';
-import { fileURLToPath } from 'node:url';
-import started from 'electron-squirrel-startup';
-import { writeFile, readFile, appendFile, readdir } from 'node:fs/promises';
+import path from "path";
+import { fileURLToPath } from "node:url";
+import started from "electron-squirrel-startup";
+import { writeFile, readFile, appendFile, readdir } from "node:fs/promises";
 
-import tcp from './tcp';
-import udp from './udp';
-import serial from './serial';
-import child_process from './child_process';
+import tcp from "./tcp";
+import udp from "./udp";
+import serial from "./serial";
+import child_process from "./child_process";
+
+import crypto from "node:crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,17 +30,25 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * - In packaged mode: uses Electron's resourcesPath (where extraResource files are placed)
  * - In dev mode: uses the source location in resources/public/sitl
  */
-function getSitlBasePath() {
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'sitl');
-  } else {
-    return path.join(app.getAppPath(), 'resources', 'public', 'sitl');
+
+const bundledFirmware = {
+  inav_8: "inav_8.0.1_MATEKF405_encrypted.hex",
+  betaflight_4_4_3: "betaflight_4.4.3_MATEKF405STD_encrypted.hex",
+};
+
+function getFirmwarePath(firmwareId) {
+  const firmwareFile = bundledFirmware[firmwareId];
+
+  if (!firmwareFile) {
+    throw new Error(`Unknown firmware: ${firmwareId}`);
   }
+
+  return path.join(app.getAppPath(), "resources", "firmware", firmwareFile);
 }
 
-const usbBootloaderIds =  [
-  { vendorId: 1155, productId: 57105}, 
-  { vendorId: 11836, productId: 57105}
+const usbBootloaderIds = [
+  { vendorId: 1155, productId: 57105 },
+  { vendorId: 11836, productId: 57105 },
 ];
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -45,15 +64,16 @@ let selectBluetoothCallback = null;
 const store = new Store();
 
 // Workaround for some Linux systems: https://github.com/electron/electron/issues/32760
-if (store.get('disable_3d_acceleration', false)) {
+if (store.get("disable_3d_acceleration", false)) {
   app.disableHardwareAcceleration();
 }
 
 // Enable remote debugging in development mode
 // This allows chrome://inspect and Playwright CDP connections
-if (!app.isPackaged) {  // Development mode (not packaged)
-  const port = process.env.CDP_PORT ?? '9222';
-  app.commandLine.appendSwitch('remote-debugging-port', port);
+if (!app.isPackaged) {
+  // Development mode (not packaged)
+  const port = process.env.CDP_PORT ?? "9222";
+  app.commandLine.appendSwitch("remote-debugging-port", port);
   console.log(`[cdp] Remote debugging enabled on port ${port}`);
   console.log(`   Chrome DevTools: chrome://inspect`);
   console.log(`   CDP Endpoint: http://localhost:${port}`);
@@ -66,59 +86,69 @@ function createDeviceChooser() {
     width: 410,
     height: 600,
     webPreferences: {
-      preload: path.join(__dirname, 'bt-device-chooser-preload.mjs'),
-    }
+      preload: path.join(__dirname, "bt-device-chooser-preload.mjs"),
+    },
   });
   bluetoothDeviceChooser.removeMenu();
-  
-  if (BT_DEVICE_CHOOSER_VITE_DEV_SERVER_URL) {
-    bluetoothDeviceChooser.loadURL(`${BT_DEVICE_CHOOSER_VITE_DEV_SERVER_URL}/js/libraries/bluetooth-device-chooser/bt-device-chooser-index.html`);
-  } else {
-    bluetoothDeviceChooser.loadFile(path.join(__dirname, `../renderer/${BT_DEVICE_CHOOSER_VITE_NAME}/js/libraries/bluetooth-device-chooser/bt-device-chooser-index.html`));
-  }
-  
 
-  bluetoothDeviceChooser.on('closed', () => {
+  if (BT_DEVICE_CHOOSER_VITE_DEV_SERVER_URL) {
+    bluetoothDeviceChooser.loadURL(
+      `${BT_DEVICE_CHOOSER_VITE_DEV_SERVER_URL}/js/libraries/bluetooth-device-chooser/bt-device-chooser-index.html`,
+    );
+  } else {
+    bluetoothDeviceChooser.loadFile(
+      path.join(
+        __dirname,
+        `../renderer/${BT_DEVICE_CHOOSER_VITE_NAME}/js/libraries/bluetooth-device-chooser/bt-device-chooser-index.html`,
+      ),
+    );
+  }
+
+  bluetoothDeviceChooser.on("closed", () => {
     btDeviceList = null;
     if (selectBluetoothCallback) {
-      selectBluetoothCallback('');
+      selectBluetoothCallback("");
       selectBluetoothCallback = null;
     }
     bluetoothDeviceChooser = null;
   });
 
-  ipcMain.on('deviceSelected', (_event, deviceID) => {
+  ipcMain.on("deviceSelected", (_event, deviceID) => {
     if (selectBluetoothCallback) {
       selectBluetoothCallback(deviceID);
       selectBluetoothCallback = null;
     }
   });
-
 }
 
-app.on('ready', () => {
+app.on("ready", () => {
   // Electron provides no valid Referer for OSM tiles (file:// in prod, localhost in dev).
   // OSM CDN rejects both with 403, so inject the required headers unconditionally.
-  const PROJECT_URL = 'https://github.com/iNavFlight/inav-configurator';
+  const PROJECT_URL = "https://github.com/iNavFlight/inav-configurator";
   session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ['https://tile.openstreetmap.org/*', 'https://*.tile.openstreetmap.org/*'] },
+    {
+      urls: [
+        "https://tile.openstreetmap.org/*",
+        "https://*.tile.openstreetmap.org/*",
+      ],
+    },
     (details, callback) => {
-      details.requestHeaders['Referer'] = PROJECT_URL;
-      details.requestHeaders['User-Agent'] = `INAV-Configurator/${app.getVersion()} (${PROJECT_URL})`;
+      details.requestHeaders["Referer"] = PROJECT_URL;
+      details.requestHeaders["User-Agent"] =
+        `INAV-Configurator/${app.getVersion()} (${PROJECT_URL})`;
       callback({ requestHeaders: details.requestHeaders });
-    }
+    },
   );
 
   createWindow();
 });
 
 function createWindow() {
-
   let mainWindowState = windowStateKeeper({
     defaultWidth: 800,
-    defaultHeight: 600
+    defaultHeight: 600,
   });
-  
+
   mainWindow = new BrowserWindow({
     x: mainWindowState.x,
     y: mainWindowState.y,
@@ -127,102 +157,155 @@ function createWindow() {
     autoHideMenuBar: true,
     icon: "images/inav_icon_128.png",
     webPreferences: {
-      preload: path.join(__dirname, 'preload.mjs'),
+      preload: path.join(__dirname, "preload.mjs"),
       nodeIntegration: true,
       webSecurity: false,
-      contextIsolation: true
+      contextIsolation: true,
     },
   });
 
-  mainWindow.webContents.on('context-menu', (_, props) => {
-    const menu = new Menu()  ;
-    menu.append(new MenuItem({ label: "Undo", role: "undo", accelerator: 'CmdOrCtrl+Z', visible: props.isEditable }));
-    menu.append(new MenuItem({ label: "Redo", role: "redo", accelerator: 'CmdOrCtrl+Y', visible: props.isEditable }));
+  mainWindow.webContents.on("context-menu", (_, props) => {
+    const menu = new Menu();
+    menu.append(
+      new MenuItem({
+        label: "Undo",
+        role: "undo",
+        accelerator: "CmdOrCtrl+Z",
+        visible: props.isEditable,
+      }),
+    );
+    menu.append(
+      new MenuItem({
+        label: "Redo",
+        role: "redo",
+        accelerator: "CmdOrCtrl+Y",
+        visible: props.isEditable,
+      }),
+    );
     menu.append(new MenuItem({ type: "separator", visible: props.isEditable }));
-    menu.append(new MenuItem({ label: 'Cut', role: 'cut', accelerator: 'CmdOrCtrl+X', visible: props.isEditable && props.selectionText }));
-    menu.append(new MenuItem({ label: 'Copy', role: 'copy', accelerator: 'CmdOrCtrl+C', visible: props.selectionText }));
-    menu.append(new MenuItem({ label: 'Paste', role: 'paste', accelerator: 'CmdOrCtrl+V', visible: props.isEditable }));
-    menu.append(new MenuItem({ label: "Select all", role: 'selectAll', accelerator: 'CmdOrCtrl+A', visible: props.isEditable}));
+    menu.append(
+      new MenuItem({
+        label: "Cut",
+        role: "cut",
+        accelerator: "CmdOrCtrl+X",
+        visible: props.isEditable && props.selectionText,
+      }),
+    );
+    menu.append(
+      new MenuItem({
+        label: "Copy",
+        role: "copy",
+        accelerator: "CmdOrCtrl+C",
+        visible: props.selectionText,
+      }),
+    );
+    menu.append(
+      new MenuItem({
+        label: "Paste",
+        role: "paste",
+        accelerator: "CmdOrCtrl+V",
+        visible: props.isEditable,
+      }),
+    );
+    menu.append(
+      new MenuItem({
+        label: "Select all",
+        role: "selectAll",
+        accelerator: "CmdOrCtrl+A",
+        visible: props.isEditable,
+      }),
+    );
 
-    menu.items.forEach(item => {
+    menu.items.forEach((item) => {
       if (item.visible) {
         menu.popup();
         return;
-      } 
+      }
     });
   });
 
-  mainWindow.webContents.on('select-bluetooth-device', (event, deviceList, callback) => {
-    event.preventDefault();
-    selectBluetoothCallback = callback;
+  mainWindow.webContents.on(
+    "select-bluetooth-device",
+    (event, deviceList, callback) => {
+      event.preventDefault();
+      selectBluetoothCallback = callback;
 
-    const compare = (a, b) => {
-      if (a.length !== b.length) {
-        return false;
-      }
-      a.every((element, index) => {
-        if (element.deviceId !== b[index].deviceId) {
+      const compare = (a, b) => {
+        if (a.length !== b.length) {
           return false;
         }
-      })
-      return true;
-    }
+        a.every((element, index) => {
+          if (element.deviceId !== b[index].deviceId) {
+            return false;
+          }
+        });
+        return true;
+      };
 
-    if (!btDeviceList || !compare(btDeviceList, deviceList)) {
-      btDeviceList = [...deviceList];
-  
-      if (!bluetoothDeviceChooser) {
-        createDeviceChooser();
-      }
-      bluetoothDeviceChooser.webContents.send('ble-scan', btDeviceList);
-    }
-  });
+      if (!btDeviceList || !compare(btDeviceList, deviceList)) {
+        btDeviceList = [...deviceList];
 
-  
-  mainWindow.webContents.session.on('select-usb-device', (event, details, callback) => {
-    console.log(details.deviceList)
-    let premittedDevice = null;
-    if (details.deviceList) {
-      details.deviceList.every((device, idx) => {
-        if (device.productId == usbBootloaderIds[idx].productId && device.vendorId == usbBootloaderIds[idx].vendorId) {
-          premittedDevice = device.deviceId;
-          return;
+        if (!bluetoothDeviceChooser) {
+          createDeviceChooser();
         }
-      });
-    } 
+        bluetoothDeviceChooser.webContents.send("ble-scan", btDeviceList);
+      }
+    },
+  );
 
-    if (premittedDevice) {
-      callback(premittedDevice);
-    } else {
-      callback();
-    }
-  });
+  mainWindow.webContents.session.on(
+    "select-usb-device",
+    (event, details, callback) => {
+      console.log(details.deviceList);
+      let premittedDevice = null;
+      if (details.deviceList) {
+        details.deviceList.every((device, idx) => {
+          if (
+            device.productId == usbBootloaderIds[idx].productId &&
+            device.vendorId == usbBootloaderIds[idx].vendorId
+          ) {
+            premittedDevice = device.deviceId;
+            return;
+          }
+        });
+      }
+
+      if (premittedDevice) {
+        callback(premittedDevice);
+      } else {
+        callback();
+      }
+    },
+  );
 
   mainWindow.webContents.session.setDevicePermissionHandler((details) => {
-    if (details.deviceType === 'usb') {     
-        return true;
+    if (details.deviceType === "usb") {
+      return true;
     }
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     // Open links starts with https:// in default browser
-    if (url.startsWith('https://')) {
+    if (url.startsWith("https://")) {
       shell.openExternal(url);
-      return { action: 'deny' };
+      return { action: "deny" };
     }
 
     return {
-      action: 'allow',
+      action: "allow",
       overrideBrowserWindowOptions: {
-        autoHideMenuBar: true
-      }
-    }
+        autoHideMenuBar: true,
+      },
+    };
   });
 
-  app.commandLine.appendSwitch('disable-features', 'OutOfBlinkCors');
-  
-  if (process.platform === "linux"){
-    app.commandLine.appendSwitch("enable-experimental-web-platform-features", true);
+  app.commandLine.appendSwitch("disable-features", "OutOfBlinkCors");
+
+  if (process.platform === "linux") {
+    app.commandLine.appendSwitch(
+      "enable-experimental-web-platform-features",
+      true,
+    );
   }
 
   app.commandLine.appendSwitch("enable-web-bluetooth", true);
@@ -233,153 +316,162 @@ function createWindow() {
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
+    mainWindow.loadFile(
+      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+    );
   }
-  
+
   mainWindowState.manage(mainWindow);
 
   // Open the DevTools.
-  if (process.env.NODE_ENV === 'development') {
+  if (process.env.NODE_ENV === "development") {
     mainWindow.on("ready-to-show", () => {
-      mainWindow.webContents.openDevTools({mode: process.env.DEV_TOOLS_MODE});
+      mainWindow.webContents.openDevTools({ mode: process.env.DEV_TOOLS_MODE });
     });
   }
-};
+}
 
-app.on('before-quit', async () => {
+app.on("before-quit", async () => {
   await tcp.close();
   await serial.close();
   child_process.stop();
 });
 
-app.on('window-all-closed', async () => {
-  if (process.platform !== 'darwin') {
+app.on("window-all-closed", async () => {
+  if (process.platform !== "darwin") {
     app.quit();
-  }  
+  }
   console.log("We're closing...");
 });
 
 app.whenReady().then(() => {
-  
-   ipcMain.handle('listSerialDevices', (_event) => {
-    return serial.getDevices()
+  ipcMain.handle("listSerialDevices", (_event) => {
+    return serial.getDevices();
   });
 
-  ipcMain.on('storeGet', (event, key, defaultVale) => {
+  ipcMain.on("storeGet", (event, key, defaultVale) => {
     event.returnValue = store.get(key, defaultVale);
   });
 
-  ipcMain.on('storeSet', (_event, key, value) => {
+  ipcMain.on("storeSet", (_event, key, value) => {
     store.set(key, value);
   });
-  ipcMain.on('storeDelete', (_event, key) => {
+  ipcMain.on("storeDelete", (_event, key) => {
     store.delete(key);
   });
 
-  ipcMain.on('appGetPath', (event, name) => {
+  ipcMain.on("appGetPath", (event, name) => {
     event.returnValue = app.getPath(name);
   });
 
-  ipcMain.on('appGetVersion', (event) => {
+  ipcMain.on("appGetVersion", (event) => {
     event.returnValue = app.getVersion();
   });
 
-  ipcMain.on('appGetLocale', (event) => {
+  ipcMain.on("appGetLocale", (event) => {
     event.returnValue = app.getLocale();
   });
 
-  ipcMain.handle('dialog.showOpenDialog', (_event, options) => {
+  (ipcMain.handle("dialog.showOpenDialog", (_event, options) => {
     return dialog.showOpenDialog(options);
   }),
+    ipcMain.handle("dialog.showSaveDialog", async (_event, options) => {
+      const opts = options || {};
+      const LAST_SAVE_DIRECTORY_KEY = "lastSaveDirectory";
 
-  ipcMain.handle('dialog.showSaveDialog', async (_event, options) => {
-    const opts = options || {};
-    const LAST_SAVE_DIRECTORY_KEY = 'lastSaveDirectory';
+      // Get the last save directory from store
+      const lastDirectory = store.get(LAST_SAVE_DIRECTORY_KEY, null);
 
-    // Get the last save directory from store
-    const lastDirectory = store.get(LAST_SAVE_DIRECTORY_KEY, null);
-
-    // If we have a last directory, combine it with the filename if one was provided
-    if (lastDirectory && opts.defaultPath) {
-      // If defaultPath is just a filename (no directory), prepend the last directory
-      if (!path.dirname(opts.defaultPath) || path.dirname(opts.defaultPath) === '.') {
-        opts.defaultPath = path.join(lastDirectory, opts.defaultPath);
+      // If we have a last directory, combine it with the filename if one was provided
+      if (lastDirectory && opts.defaultPath) {
+        // If defaultPath is just a filename (no directory), prepend the last directory
+        if (
+          !path.dirname(opts.defaultPath) ||
+          path.dirname(opts.defaultPath) === "."
+        ) {
+          opts.defaultPath = path.join(lastDirectory, opts.defaultPath);
+        }
+      } else if (lastDirectory && !opts.defaultPath) {
+        // No filename provided, just use the directory
+        opts.defaultPath = lastDirectory;
       }
-    } else if (lastDirectory && !opts.defaultPath) {
-      // No filename provided, just use the directory
-      opts.defaultPath = lastDirectory;
-    }
 
-    // Show the save dialog
-    const result = await dialog.showSaveDialog(opts);
+      // Show the save dialog
+      const result = await dialog.showSaveDialog(opts);
 
-    // If user selected a file (didn't cancel), save the directory for next time
-    if (result && result.filePath && !result.canceled) {
-      // Extract directory from the full file path (path already imported at top)
-      const directory = path.dirname(result.filePath);
-      store.set(LAST_SAVE_DIRECTORY_KEY, directory);
-    }
+      // If user selected a file (didn't cancel), save the directory for next time
+      if (result && result.filePath && !result.canceled) {
+        // Extract directory from the full file path (path already imported at top)
+        const directory = path.dirname(result.filePath);
+        store.set(LAST_SAVE_DIRECTORY_KEY, directory);
+      }
 
-    return result;
-  }),
+      return result;
+    }),
+    ipcMain.on("dialog.alert", (event, message) => {
+      event.returnValue = dialog.showMessageBoxSync({
+        message: message,
+        icon: path.join(__dirname, "inav_icon_128.png"),
+      });
+    }));
 
-  ipcMain.on('dialog.alert', (event, message) => {
-    event.returnValue = dialog.showMessageBoxSync({ message: message, icon: path.join(__dirname, 'inav_icon_128.png')});
-  });
-
-  ipcMain.handle('dialog.confirm', async (_event, message) => {
-    const result = await dialog.showMessageBox({ message: message, icon: path.join(__dirname, 'inav_icon_128.png'), buttons: ["Yes", "No"] });
+  ipcMain.handle("dialog.confirm", async (_event, message) => {
+    const result = await dialog.showMessageBox({
+      message: message,
+      icon: path.join(__dirname, "inav_icon_128.png"),
+      buttons: ["Yes", "No"],
+    });
     return result.response === 0;
   });
 
-  ipcMain.handle('tcpConnect', (_event, host, port) => {
+  ipcMain.handle("tcpConnect", (_event, host, port) => {
     return tcp.connect(host, port, mainWindow);
   });
 
-  ipcMain.handle('tcpSend', (_event, data) => {
+  ipcMain.handle("tcpSend", (_event, data) => {
     return tcp.send(data);
   });
 
-  ipcMain.on('tcpClose', (_event) => {
+  ipcMain.on("tcpClose", (_event) => {
     tcp.close();
   });
 
-  ipcMain.handle('serialConnect', (_event, path, options) => {
+  ipcMain.handle("serialConnect", (_event, path, options) => {
     return serial.connect(path, options, mainWindow);
   });
 
-  ipcMain.handle('serialSend', (_event, data) => {
+  ipcMain.handle("serialSend", (_event, data) => {
     return serial.send(data);
   });
 
-  ipcMain.handle('serialClose', (_event) => {
+  ipcMain.handle("serialClose", (_event) => {
     return serial.close();
   });
 
-  ipcMain.handle('udpConnect', (_event, ip, port) => {
+  ipcMain.handle("udpConnect", (_event, ip, port) => {
     return udp.connect(ip, port, mainWindow);
   });
 
-  ipcMain.handle('udpSend', (_event, data) => {
+  ipcMain.handle("udpSend", (_event, data) => {
     return udp.send(data);
   });
 
-  ipcMain.on('udpClose', (_event) => {
+  ipcMain.on("udpClose", (_event) => {
     udp.close();
   });
 
-  ipcMain.handle('writeFile', (_event, filename, data) => {
-    return new Promise(async resolve => {
+  ipcMain.handle("writeFile", (_event, filename, data) => {
+    return new Promise(async (resolve) => {
       try {
         await writeFile(filename, data);
-        resolve(false)
+        resolve(false);
       } catch (err) {
         resolve(err);
       }
     });
   });
 
-  ipcMain.handle('appendFile', async (_event, filename, data) => {
+  ipcMain.handle("appendFile", async (_event, filename, data) => {
     try {
       await appendFile(filename, data);
       return false;
@@ -389,52 +481,114 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.handle('readFile', (_event, filename, encoding) => {
-    return new Promise(async resolve => {
+  ipcMain.handle("readFile", (_event, filename, encoding) => {
+    return new Promise(async (resolve) => {
       try {
-        const data = await readFile(filename, {encoding: encoding});
-        
-        resolve({error: false, data: data});
+        const data = await readFile(filename, { encoding: encoding });
+
+        resolve({ error: false, data: data });
       } catch (err) {
-        resolve({error: err});
+        resolve({ error: err });
       }
     });
   });
 
-  ipcMain.handle('chmod', (_event, pathName, mode) => {
-    return new Promise(resolve => {
-      chmod(path.join(getSitlBasePath(), pathName), mode, error => {
+  // Decrypts the encrypted firmware and returns the original HEX data.
+  ipcMain.handle("decryptFirmware", (_event, encryptedData) => {
+    try {
+      const keyHex = __FIRMWARE_KEY__;
+
+      if (!keyHex) {
+        throw new Error("FIRMWARE_KEY_HEX bulunamadı.");
+      }
+
+      const key = Buffer.from(keyHex, "hex");
+
+      if (key.length !== 32) {
+        throw new Error("Firmware key 32 byte olmalı.");
+      }
+
+      const data = Buffer.from(encryptedData, "base64");
+
+      // Check that the encrypted firmware file is not empty or invalid.
+      if (data.length <= 28) {
+        throw new Error("Encrypted firmware data is invalid or empty.");
+      }
+
+      const iv = data.subarray(0, 12);
+      const authTag = data.subarray(12, 28);
+      const encrypted = data.subarray(28);
+
+      const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+
+      decipher.setAuthTag(authTag);
+
+      const decrypted = Buffer.concat([
+        decipher.update(encrypted),
+        decipher.final(),
+      ]);
+
+      return {
+        error: false,
+        data: decrypted.toString("utf8"),
+      };
+    } catch (err) {
+      return {
+        error: err.message,
+      };
+    }
+  });
+
+  // Loads the encrypted firmware stored inside the application.
+  ipcMain.handle("getFirmware", async (_event, firmwareId) => {
+    try {
+      const firmwarePath = getFirmwarePath(firmwareId);
+      const data = await readFile(firmwarePath, "utf8");
+
+      return {
+        error: false,
+        data: data,
+      };
+    } catch (err) {
+      return {
+        error: err.message,
+      };
+    }
+  });
+  ipcMain.handle("chmod", (_event, pathName, mode) => {
+    return new Promise((resolve) => {
+      chmod(path.join(getSitlBasePath(), pathName), mode, (error) => {
         if (error) {
-          resolve(error.message)
+          resolve(error.message);
         } else {
-          resolve(false)
+          resolve(false);
         }
       });
     });
   });
 
-  ipcMain.handle('rm', (_event, path) => {
-    return new Promise(resolve => {
-      rm(path, error => {
+  ipcMain.handle("rm", (_event, path) => {
+    return new Promise((resolve) => {
+      rm(path, (error) => {
         if (error) {
-          resolve(error.message)
+          resolve(error.message);
         } else {
-          resolve(false)
+          resolve(false);
         }
       });
     });
   });
 
-  ipcMain.handle('getBackupDir', (_event) => {
-    const backupDir = path.join(app.getPath('userData'), 'inav-backups');
+  ipcMain.handle("getBackupDir", (_event) => {
+    const backupDir = path.join(app.getPath("userData"), "inav-backups");
     if (!existsSync(backupDir)) {
       mkdirSync(backupDir, { recursive: true });
     }
     return backupDir;
   });
 
-  ipcMain.handle('openBackupDir', (_event) => {
-    const backupDir = path.join(app.getPath('userData'), 'inav-backups');
+  ipcMain.handle("openBackupDir", (_event) => {
+    const backupDir = path.join(app.getPath("userData"), "inav-backups");
     if (!existsSync(backupDir)) {
       mkdirSync(backupDir, { recursive: true });
     }
@@ -442,20 +596,25 @@ app.whenReady().then(() => {
     return backupDir;
   });
 
-  ipcMain.handle('listBackups', async (_event) => {
-    const backupDir = path.join(app.getPath('userData'), 'inav-backups');
+  ipcMain.handle("listBackups", async (_event) => {
+    const backupDir = path.join(app.getPath("userData"), "inav-backups");
     if (!existsSync(backupDir)) {
       return [];
     }
     const files = await readdir(backupDir);
-    return files.filter(f => f.endsWith('.txt') || f.endsWith('.cli'));
+    return files.filter((f) => f.endsWith(".txt") || f.endsWith(".cli"));
   });
 
-  ipcMain.on('startChildProcess', (_event, command, args, opts) => {
-    child_process.start(path.join(getSitlBasePath(), command), args, opts, mainWindow);
+  ipcMain.on("startChildProcess", (_event, command, args, opts) => {
+    child_process.start(
+      path.join(getSitlBasePath(), command),
+      args,
+      opts,
+      mainWindow,
+    );
   });
 
-  ipcMain.on('killChildProcess', (_event) => {
+  ipcMain.on("killChildProcess", (_event) => {
     child_process.stop();
   });
 
